@@ -1,0 +1,18 @@
+[package]
+name = "lumbar"
+version = "0.1.0"
+edition = "2024"
+description = "A hardware-agnostic cache and memory-hierarchy simulator for reasoning about access patterns before touching real hardware"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hz2/lumbar"
+keywords = ["cache", "simulation", "memory-hierarchy", "performance"]
+categories = ["simulation", "science"]
+
+[features]
+default = ["patterns"]
+patterns = []
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"
