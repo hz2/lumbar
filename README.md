@@ -34,13 +34,36 @@ println!("blocked: {:.1}%", blocked.per_level[0].hit_rate() * 100.0);
   capacity can still thrash if every row of an access pattern lands in the
   same set; padding the stride by one cache line fixes it with no other
   change.
+- `cargo run --example victim_cache` -- the same kind of set-conflict
+  thrashing, fixed a different way: attaching a small victim cache instead
+  of changing the access pattern.
+
+## CLI
+
+A `lumbar` binary is available behind the `cli` feature
+(`cargo install lumbar --features cli`, or `nix run` from this repo) for
+trying a hierarchy and a pattern from the shell:
+
+```sh
+lumbar --cache-size 4096 --ways 4 matmul-blocked 64 64 64 16
+lumbar --cache-size 320 --ways 0 --belady matmul-naive 8 8 8
+lumbar --victim-lines 4 row-major 64 64
+lumbar trace my-trace.txt   # "r <addr> <size>" / "w <addr> <size>" per line
+```
+
+Run `lumbar --help` for the full set of options and patterns.
 
 ## What it does
 
 - **`Simulator`** walks a stream of typed memory accesses through a
   configurable, multi-level `Hierarchy` (size, line size, associativity,
-  replacement policy, write policy), producing per-level hit/miss counts and
-  an AMAT estimate.
+  replacement policy, write policy, an optional victim cache), producing
+  per-level hit/miss counts and an AMAT estimate.
+- **`belady_optimal`** simulates Belady's MIN algorithm -- the provably
+  optimal offline replacement policy -- against a single cache level, as a
+  ceiling to compare an online policy like LRU against. Unlike `Simulator`,
+  it needs the whole trace up front, since it evicts based on which resident
+  line is used furthest in the future.
 - **`reuse_distances`** computes LRU stack distances from a single pass over
   an address stream, giving hit-rate-vs-cache-size curves for the idealized
   fully-associative-LRU case without re-simulating per size.
@@ -53,7 +76,10 @@ println!("blocked: {:.1}%", blocked.per_level[0].hit_rate() * 100.0);
 A `Hierarchy` is a list of heterogeneous levels -- `Cache`, `Scratchpad`
 (explicitly addressed memory like GPU shared memory, no tags/replacement),
 and a terminal `Backing` level -- so the same API can describe a CPU
-L1/L2/L3/DRAM stack or a GPU-style global/L2/shared-memory/DRAM stack.
+L1/L2/L3/DRAM stack or a GPU-style global/L2/shared-memory/DRAM stack. A
+`Cache` level can optionally attach a small, fully-associative victim
+cache (`CacheConfigBuilder::victim_cache`) to absorb the conflict misses a
+low-associativity cache is prone to.
 
 ## Non-goals
 
