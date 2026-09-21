@@ -11,8 +11,16 @@ categories = ["simulation", "science"]
 [features]
 default = ["patterns"]
 patterns = []
+cli = ["patterns", "dep:clap", "dep:anyhow"]
+
+[[bin]]
+name = "lumbar"
+path = "src/bin/lumbar.rs"
+required-features = ["cli"]
 
 [dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+anyhow = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = "1"

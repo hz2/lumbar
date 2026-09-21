@@ -14,10 +14,9 @@
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-    in
-    {
-      packages = forAllSystems (pkgs: {
-        default = pkgs.rustPlatform.buildRustPackage {
+      commonArgs =
+        pkgs:
+        {
           pname = cargoToml.package.name;
           version = cargoToml.package.version;
           src = pkgs.lib.fileset.toSource {
@@ -31,6 +30,26 @@
             ];
           };
           cargoLock.lockFile = ./Cargo.lock;
+        };
+    in
+    {
+      packages = forAllSystems (pkgs: {
+        default = pkgs.rustPlatform.buildRustPackage (commonArgs pkgs);
+        # the `lumbar` CLI binary, behind the `cli` feature (extra deps:
+        # clap, anyhow) that `default` deliberately doesn't build.
+        cli = pkgs.rustPlatform.buildRustPackage (
+          (commonArgs pkgs)
+          // {
+            buildFeatures = [ "cli" ];
+            checkFeatures = [ "cli" ];
+          }
+        );
+      });
+
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.cli}/bin/lumbar";
         };
       });
 
