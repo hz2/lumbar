@@ -65,6 +65,7 @@ pub struct CacheConfig {
     write_allocate: bool,
     inclusion: InclusionPolicy,
     latency_cycles: u32,
+    victim_lines: usize,
 }
 
 impl CacheConfig {
@@ -109,15 +110,20 @@ impl CacheConfig {
     pub fn latency_cycles(&self) -> u32 {
         self.latency_cycles
     }
+
+    /// Number of lines in this cache's attached victim buffer, `0` if none.
+    pub fn victim_lines(&self) -> usize {
+        self.victim_lines
+    }
 }
 
 /// Builds a [`CacheConfig`].
 ///
 /// Defaults: [`ReplacementPolicy::Lru`], [`WritePolicy::WriteBack`] with
-/// write-allocate, [`InclusionPolicy::NonInclusive`], zero latency. Only the
-/// write-back plus write-allocate combination is exercised heavily by this
-/// crate's own tests; the other write-policy combinations are implemented but
-/// lightly tested.
+/// write-allocate, [`InclusionPolicy::NonInclusive`], zero latency, no victim
+/// cache. Only the write-back plus write-allocate combination is exercised
+/// heavily by this crate's own tests; the other write-policy combinations are
+/// implemented but lightly tested.
 #[derive(Clone, Copy, Debug)]
 pub struct CacheConfigBuilder {
     size_bytes: usize,
@@ -128,6 +134,7 @@ pub struct CacheConfigBuilder {
     write_allocate: bool,
     inclusion: InclusionPolicy,
     latency_cycles: u32,
+    victim_lines: usize,
 }
 
 impl CacheConfigBuilder {
@@ -141,6 +148,7 @@ impl CacheConfigBuilder {
             write_allocate: true,
             inclusion: InclusionPolicy::NonInclusive,
             latency_cycles: 0,
+            victim_lines: 0,
         }
     }
 
@@ -171,6 +179,16 @@ impl CacheConfigBuilder {
     #[must_use]
     pub fn latency_cycles(mut self, latency_cycles: u32) -> Self {
         self.latency_cycles = latency_cycles;
+        self
+    }
+
+    /// Attaches a small, fully-associative victim buffer of `lines` entries
+    /// that catches this cache's evictions, checked on a miss before falling
+    /// through to the next level. A classic, cheap fix for the conflict
+    /// misses a low-associativity cache is prone to.
+    #[must_use]
+    pub fn victim_cache(mut self, lines: usize) -> Self {
+        self.victim_lines = lines;
         self
     }
 
@@ -218,6 +236,7 @@ impl CacheConfigBuilder {
             write_allocate: self.write_allocate,
             inclusion: self.inclusion,
             latency_cycles: self.latency_cycles,
+            victim_lines: self.victim_lines,
         })
     }
 }

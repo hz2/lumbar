@@ -48,12 +48,14 @@ struct CacheState {
     hits: u64,
     misses: u64,
     writebacks: u64,
+    victim: Option<VictimCache>,
 }
 
 impl CacheState {
     fn new(config: CacheConfig) -> Self {
         let ways = config.ways();
         let num_sets = config.num_sets();
+        let victim_lines = config.victim_lines();
         Self {
             config,
             ways,
@@ -62,7 +64,43 @@ impl CacheState {
             hits: 0,
             misses: 0,
             writebacks: 0,
+            victim: (victim_lines > 0).then(|| VictimCache::new(victim_lines)),
         }
+    }
+}
+
+/// A small, fully-associative buffer holding a primary cache's most recent
+/// evictions, checked on a miss before falling through to the next level.
+struct VictimCache {
+    capacity: usize,
+    /// `(block, dirty)` pairs, front = most recently used.
+    entries: Vec<(u64, bool)>,
+}
+
+impl VictimCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Removes and returns the dirty bit for `block` if resident (a victim hit).
+    fn take(&mut self, block: u64) -> Option<bool> {
+        let pos = self.entries.iter().position(|&(b, _)| b == block)?;
+        Some(self.entries.remove(pos).1)
+    }
+
+    /// Inserts an evicted `(block, dirty)` pair, evicting its own
+    /// least-recently-used entry first if full. Returns that entry, if any.
+    fn insert(&mut self, block: u64, dirty: bool) -> Option<(u64, bool)> {
+        let evicted = if self.entries.len() >= self.capacity {
+            self.entries.pop()
+        } else {
+            None
+        };
+        self.entries.insert(0, (block, dirty));
+        evicted
     }
 }
 
@@ -274,6 +312,24 @@ impl Simulator {
             return;
         }
 
+        // not resident in the primary tags -- a victim cache catches it here,
+        // before this counts as a real miss to the next level
+        if let Some(victim_dirty) = self.take_from_victim(level_idx, block) {
+            if let LevelState::Cache(state) = &mut self.levels[level_idx] {
+                state.hits += 1;
+            }
+            let install_dirty = victim_dirty
+                || (kind == AccessKind::Write && write_policy == WritePolicy::WriteBack);
+            let way = self.select_victim(level_idx, set_index, ways, policy);
+            let evicted = self.install_line(level_idx, set_index, way, block, install_dirty);
+            self.route_eviction(level_idx, evicted);
+            self.update_recency_after_install(level_idx, set_index, way, policy);
+            if kind == AccessKind::Write && write_policy == WritePolicy::WriteThrough && has_next {
+                self.access_level(level_idx + 1, address, AccessKind::Write);
+            }
+            return;
+        }
+
         if let LevelState::Cache(state) = &mut self.levels[level_idx] {
             state.misses += 1;
         }
@@ -296,22 +352,63 @@ impl Simulator {
             self.access_level(level_idx + 1, address, AccessKind::Write);
         }
 
-        let victim_way = self.select_victim(level_idx, set_index, ways, policy);
-        let evicted_dirty = {
-            let LevelState::Cache(state) = &mut self.levels[level_idx] else {
-                unreachable!()
-            };
-            let set = &mut state.sets[set_index];
-            let was_dirty = set.tags[victim_way].is_some() && set.dirty[victim_way];
-            set.tags[victim_way] = Some(block);
-            set.dirty[victim_way] =
-                kind == AccessKind::Write && write_policy == WritePolicy::WriteBack;
-            was_dirty
+        let way = self.select_victim(level_idx, set_index, ways, policy);
+        let install_dirty = kind == AccessKind::Write && write_policy == WritePolicy::WriteBack;
+        let evicted = self.install_line(level_idx, set_index, way, block, install_dirty);
+        self.route_eviction(level_idx, evicted);
+        self.update_recency_after_install(level_idx, set_index, way, policy);
+    }
+
+    /// Checks this level's attached victim cache (if any) for `block`,
+    /// removing and returning its dirty bit on a hit.
+    fn take_from_victim(&mut self, level_idx: usize, block: u64) -> Option<bool> {
+        let LevelState::Cache(state) = &mut self.levels[level_idx] else {
+            unreachable!()
         };
-        if evicted_dirty && let LevelState::Cache(state) = &mut self.levels[level_idx] {
-            state.writebacks += 1;
+        state.victim.as_mut()?.take(block)
+    }
+
+    /// Installs `block` into `way`, returning whatever it evicted (if that
+    /// way held a valid line), as `(block, dirty)`.
+    fn install_line(
+        &mut self,
+        level_idx: usize,
+        set_index: usize,
+        way: usize,
+        block: u64,
+        dirty: bool,
+    ) -> Option<(u64, bool)> {
+        let LevelState::Cache(state) = &mut self.levels[level_idx] else {
+            unreachable!()
+        };
+        let set = &mut state.sets[set_index];
+        let evicted = set.tags[way].map(|evicted_block| (evicted_block, set.dirty[way]));
+        set.tags[way] = Some(block);
+        set.dirty[way] = dirty;
+        evicted
+    }
+
+    /// Sends an evicted line to this level's victim cache if it has one
+    /// (counting a writeback only if the victim cache itself then evicts a
+    /// dirty entry to make room), or counts an immediate writeback if not.
+    fn route_eviction(&mut self, level_idx: usize, evicted: Option<(u64, bool)>) {
+        let Some((block, dirty)) = evicted else {
+            return;
+        };
+        let LevelState::Cache(state) = &mut self.levels[level_idx] else {
+            unreachable!()
+        };
+        match &mut state.victim {
+            Some(victim) => {
+                if let Some((_, evicted_dirty)) = victim.insert(block, dirty)
+                    && evicted_dirty
+                {
+                    state.writebacks += 1;
+                }
+            }
+            None if dirty => state.writebacks += 1,
+            None => {}
         }
-        self.update_recency_after_install(level_idx, set_index, victim_way, policy);
     }
 
     fn select_victim(
