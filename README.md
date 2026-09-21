@@ -1,5 +1,8 @@
 # lumbar
 
+[![crates.io](https://img.shields.io/crates/v/lumbar.svg)](https://crates.io/crates/lumbar)
+[![CI](https://github.com/hz2/lumbar/actions/workflows/ci.yml/badge.svg)](https://github.com/hz2/lumbar/actions/workflows/ci.yml)
+
 A hardware-agnostic cache and memory-hierarchy simulator for Rust. It lets
 you reason about cache behavior for a given memory-access pattern before
 touching real hardware: hit/miss rates, AMAT, reuse-distance curves, and a
@@ -23,7 +26,14 @@ println!("naive:   {:.1}%", naive.per_level[0].hit_rate() * 100.0);
 println!("blocked: {:.1}%", blocked.per_level[0].hit_rate() * 100.0);
 ```
 
-Run `cargo run --example naive_vs_blocked_matmul` to see this end to end.
+## Examples
+
+- `cargo run --example naive_vs_blocked_matmul` -- the walkthrough above, end
+  to end.
+- `cargo run --example power_of_two_stride` -- a cache with plenty of raw
+  capacity can still thrash if every row of an access pattern lands in the
+  same set; padding the stride by one cache line fixes it with no other
+  change.
 
 ## What it does
 
