@@ -11,6 +11,9 @@
 //! - [`patterns`] has built-in generators (naive/blocked matmul, row/column
 //!   major, transpose, stencil) for trying the above without hand-writing a
 //!   trace.
+//! - [`belady_optimal`] simulates the provably optimal offline replacement
+//!   policy against a single cache level, as a ceiling to compare an online
+//!   policy like LRU against.
 //!
 //! ```
 //! use lumbar::{Access, Associativity, CacheConfigBuilder, Hierarchy, Simulator};
@@ -29,6 +32,7 @@
 
 mod access;
 mod advisory;
+mod belady;
 mod hierarchy;
 #[cfg(feature = "patterns")]
 pub mod patterns;
@@ -37,6 +41,7 @@ mod simulator;
 
 pub use access::{Access, AccessKind, Address, StreamId};
 pub use advisory::{WorkingSetAdvisory, advise_working_set};
+pub use belady::belady_optimal;
 pub use hierarchy::cache_config::{
     Associativity, CacheConfig, CacheConfigBuilder, CacheConfigError, InclusionPolicy, WritePolicy,
 };
